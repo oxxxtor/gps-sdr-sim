@@ -11,6 +11,7 @@
 #include <unistd.h>
 #endif
 #include "gpssim.h"
+#include "sat.h"
 
 int sinTable512[] = {
 	   2,   5,   8,  11,  14,  17,  20,  23,  26,  29,  32,  35,  38,  41,  44,  47,
@@ -91,6 +92,7 @@ double ant_pat_db[37] = {
 };
 
 int allocatedSat[MAX_SAT];
+struct satsSet *usedSat = NULL;
 
 /*! \brief Subtract two vectors of double
  *  \param[out] y Result of subtraction
@@ -810,6 +812,36 @@ gpstime_t incGpsTime(gpstime_t g0, double dt)
 	return(g1);
 }
 
+void initUsedSats(char *list)
+{
+	char *str = list;
+	int id;
+
+	while (1) {
+		id = atoi(str);
+
+		if (id > 0) {
+			add(usedSat, id);
+		}
+
+		str = strchr(str, ',');
+		if (str == NULL) {
+			break;
+		}
+
+		str++;
+	}
+
+	fprintf(stderr, "Used satellites: ");
+	for (int i = 0; i < usedSat->count; i++) {
+		fprintf(stderr, "%d", usedSat->id[i]);
+		if (i < usedSat->count - 1) {
+			fprintf(stderr, ", ");
+		}
+	}
+	fprintf(stderr, "\n");
+}
+
 /*! \brief Read Ephemersi data from the RINEX Navigation file */
 /*  \param[out] eph Array of Output SV ephemeris data
  *  \param[in] fname File name of the RINEX file
@@ -820,6 +852,7 @@ int readRinexNavAll(ephem_t eph[][MAX_SAT], ionoutc_t *ionoutc, const char *fnam
 	FILE *fp;
 	int ieph;
 	
+	int id;
 	int sv;
 	char str[MAX_CHAR];
 	char tmp[20];
@@ -944,7 +977,15 @@ int readRinexNavAll(ephem_t eph[][MAX_SAT], ionoutc_t *ionoutc, const char *fnam
 		// PRN
 		strncpy(tmp, str, 2);
 		tmp[2] = 0;
-		sv = atoi(tmp)-1;
+		id = atoi(tmp);
+		sv = id-1;
+
+		// filter for satelites
+		if (usedSat != NULL) {
+			if (0 == in(usedSat, id)) {
+				continue;
+			}
+		}
 
 		// EPOCH
 		strncpy(tmp, str+3, 2);
@@ -1652,6 +1693,7 @@ void usage(void)
 	fprintf(stderr, "Usage: gps-sdr-sim [options]\n"
 		"Options:\n"
 		"  -e <gps_nav>     RINEX navigation file for GPS ephemerides (required)\n"
+		"  -f <0,10,...>    Identifiers of used satellites\n"
 		"  -u <user_motion> User motion file (dynamic mode)\n"
 		"  -g <nmea_gga>    NMEA GGA stream (dynamic mode)\n"
 		"  -c <location>    ECEF X,Y,Z in meters (static mode) e.g. 3967283.154,1022538.181,4872414.484\n"
@@ -1753,12 +1795,16 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	while ((result=getopt(argc,argv,"e:u:g:c:l:o:s:b:T:t:d:iv"))!=-1)
+	while ((result=getopt(argc,argv,"e:f:u:g:c:l:o:s:b:T:t:d:iv"))!=-1)
 	{
 		switch (result)
 		{
 		case 'e':
 			strcpy(navfile, optarg);
+			break;
+		case 'f':
+			usedSat = create();
+			initUsedSats(optarg);
 			break;
 		case 'u':
 			strcpy(umfile, optarg);
@@ -1919,6 +1965,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "xyz = %11.1f, %11.1f, %11.1f\n", xyz[0][0], xyz[0][1], xyz[0][2]);
 	fprintf(stderr, "llh = %11.6f, %11.6f, %11.1f\n", llh[0]*R2D, llh[1]*R2D, llh[2]);
 */
+
 	////////////////////////////////////////////////////////////
 	// Read ephemeris
 	////////////////////////////////////////////////////////////
@@ -1930,6 +1977,8 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "ERROR: No ephemeris available.\n");
 		exit(1);
 	}
+
+	fprintf(stderr, "%d ephemeris available.\n", neph);
 
 	if ((verb==TRUE)&&(ionoutc.vflg==TRUE))
 	{
@@ -2356,6 +2405,8 @@ int main(int argc, char *argv[])
 
 	// Close file
 	fclose(fp);
+
+	destroy(usedSat);
 
 	// Process time
 	fprintf(stderr, "Process time = %.1f [sec]\n", (double)(tend-tstart)/CLOCKS_PER_SEC);
