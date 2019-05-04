@@ -1688,6 +1688,45 @@ int allocateChannel(channel_t *chan, ephem_t *eph, ionoutc_t ionoutc, gpstime_t 
 	return(nsat);
 }
 
+int saveNavMessageToFile(char *fileName, datetime_t t, channel_t *chan) {
+	FILE *fp;
+	int space;
+
+	if (NULL == (fp = fopen(fileName, "a+t"))) {
+		return -1;
+	}
+
+	space = fprintf(fp, "%.4d-%.2d-%.2d %.2d:%.2d:%04.1f", t.y, t.m, t.d, t.hh, t.mm, t.sec);
+	for (int i = 0; i < 5; i++) {
+		if (i > 0) {
+			fprintf(fp, "%*s", space, " ");
+		}
+
+		for (int j = 0; j < N_DWRD_SBF; j++) {
+			fprintf(fp, " %.8X", chan->sbf[i][j]);
+		}
+
+		fprintf(fp, "\n");
+	}
+
+	fclose(fp);
+
+	return 0;
+}
+
+void saveNavMessagesToFiles(channel_t *chan, gpstime_t g) {
+	char fileName[MAX_CHAR];
+	datetime_t t;
+	
+	gps2date(&g, &t);
+	for (int i = 0; i < MAX_CHAN; i++) {
+		if (chan[i].prn > 0) {
+			sprintf(fileName, "%.3d.dat", chan[i].prn);
+			saveNavMessageToFile(fileName, t, &chan[i]);
+		}
+	}
+}
+
 void usage(void)
 {
 	fprintf(stderr, "Usage: gps-sdr-sim [options]\n"
@@ -1705,7 +1744,8 @@ void usage(void)
 		"  -s <frequency>   Sampling frequency [Hz] (default: 2600000)\n"
 		"  -b <iq_bits>     I/Q data format [1/8/16] (default: 16)\n"
 		"  -i               Disable ionospheric delay for spacecraft scenario\n"
-		"  -v               Show details about simulated channels\n",
+		"  -v               Show details about simulated channels\n"
+		"  -m               Log navigation messages\n",
 		((double)USER_MOTION_SIZE) / 10.0, STATIC_MAX_DURATION);
 
 	return;
@@ -1769,6 +1809,8 @@ int main(int argc, char *argv[])
 	int iduration;
 	int verb;
 
+	int logNavMessages = FALSE;
+
 	int timeoverwrite = FALSE; // Overwirte the TOC and TOE in the RINEX file
 
 	ionoutc_t ionoutc;
@@ -1795,7 +1837,7 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	while ((result=getopt(argc,argv,"e:f:u:g:c:l:o:s:b:T:t:d:iv"))!=-1)
+	while ((result=getopt(argc,argv,"e:f:u:g:c:l:o:s:b:T:t:d:ivm"))!=-1)
 	{
 		switch (result)
 		{
@@ -1887,6 +1929,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'v':
 			verb = TRUE;
+			break;
+		case 'm':
+			logNavMessages = TRUE;
 			break;
 		case ':':
 		case '?':
@@ -2386,6 +2431,12 @@ int main(int argc, char *argv[])
 							chan[i].azel[0]*R2D, chan[i].azel[1]*R2D, chan[i].rho0.d, chan[i].rho0.iono_delay);
 				}
 			}
+		}
+
+		// log nav messages
+		if (logNavMessages)
+		{
+			saveNavMessagesToFiles(chan, grx);
 		}
 
 		// Update receiver time
